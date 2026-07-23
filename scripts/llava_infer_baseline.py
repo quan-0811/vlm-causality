@@ -58,7 +58,7 @@ def build_prompt(question_text):
     """Build a LLaVA-format prompt that strongly encourages a yes/no answer."""
     return (
         f"USER: <image>\n"
-        f"Answer with only Yes or No. {question_text}\n"
+        f"{question_text}\n"
         f"ASSISTANT:"
     )
 
