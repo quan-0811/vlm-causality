@@ -1,8 +1,8 @@
 """
 Run LLaVA 1.5 7B (HF) inference on a POPE JSONL file.
 
-Saves results incrementally in POPE-eval-compatible format:
-  JSONL with {"question_id": int, "question": str, "answer": "yes"|"no"}
+Saves results incrementally:
+  JSONL with {"question_id": int, "question": str, "answer": "yes"|"no", "raw_output": str}
 
 Supports real batched inference for speed.
 
@@ -36,7 +36,7 @@ def parse_args():
                         help="Path to save results (JSONL)")
     parser.add_argument("--model-id", default="llava-hf/llava-1.5-7b-hf",
                         help="HF model id")
-    parser.add_argument("--max-new-tokens", type=int, default=16,
+    parser.add_argument("--max-new-tokens", type=int, default=4,
                         help="Max tokens to generate (answer is just yes/no)")
     parser.add_argument("--save-interval", type=int, default=500,
                         help="Save results every N questions")
@@ -58,7 +58,7 @@ def build_prompt(question_text):
     """Build a LLaVA-format prompt that strongly encourages a yes/no answer."""
     return (
         f"USER: <image>\n"
-        f"{question_text} Answer with only Yes or No.\n"
+        f"Answer with only Yes or No. {question_text}\n"
         f"ASSISTANT:"
     )
 
@@ -145,16 +145,18 @@ def run_batched_inference(model, processor, batch_items, image_root, max_new_tok
 
     # Decode each output (strip the input prompt part)
     answers = []
+    raw_outputs = []
     for i in range(len(batch_items)):
         input_len = inputs["input_ids"][i].shape[0]
         generated_ids = outputs[i, input_len:]
-        answer_text = processor.decode(
+        raw_text = processor.decode(
             generated_ids,
             skip_special_tokens=True,
-        )
-        answers.append(extract_answer(answer_text))
+        ).strip()
+        raw_outputs.append(raw_text)
+        answers.append(extract_answer(raw_text))
 
-    return answers
+    return answers, raw_outputs
 
 
 def save_results(results, output_path):
@@ -216,17 +218,18 @@ def main():
         batch_items = pope_data[i:batch_end]
 
         # Run batched forward pass
-        answers = run_batched_inference(
+        answers, raw_outputs = run_batched_inference(
             model, processor, batch_items,
             args.image_root, args.max_new_tokens,
         )
 
         # Collect results
-        for item, answer in zip(batch_items, answers):
+        for item, answer, raw_output in zip(batch_items, answers, raw_outputs):
             results.append({
                 "question_id": item["question_id"],
                 "question": item["text"],
                 "answer": answer,
+                "raw_output": raw_output,
             })
 
         # Incremental save
