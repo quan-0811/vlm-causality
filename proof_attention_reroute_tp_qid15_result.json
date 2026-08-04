@@ -1,0 +1,136 @@
+{
+  "design": "bbox-only: actual head output + attention delta",
+  "question_id": 15,
+  "image": "COCO_train2014_000000390182.jpg",
+  "question": "Is there a cake in the image?",
+  "object": "cake",
+  "heads": [
+    "L11H17",
+    "L7H14",
+    "L10H29",
+    "L11H26",
+    "L11H14",
+    "L8H6",
+    "L8H25",
+    "L12H25",
+    "L6H17",
+    "L11H7"
+  ],
+  "queries": [
+    {
+      "slot": "object_last",
+      "position": 587,
+      "token": "ake"
+    },
+    {
+      "slot": "in",
+      "position": 588,
+      "token": "\u2581in"
+    }
+  ],
+  "grid": 24,
+  "bbox_patches": 31,
+  "image_patches": 576,
+  "coco_boxes": [
+    [
+      261.64,
+      426.17,
+      30.96,
+      21.74
+    ],
+    [
+      209.89,
+      432.81,
+      50.7,
+      14.03
+    ],
+    [
+      159.62,
+      425.83,
+      58.1,
+      17.95
+    ],
+    [
+      136.81,
+      455.21,
+      64.21,
+      19.19
+    ],
+    [
+      148.04,
+      440.91,
+      60.5,
+      19.55
+    ],
+    [
+      296.56,
+      425.98,
+      29.05,
+      20.51
+    ],
+    [
+      292.34,
+      443.03,
+      38.35,
+      25.23
+    ],
+    [
+      194.32,
+      459.15,
+      57.88,
+      16.64
+    ],
+    [
+      201.5,
+      445.42,
+      53.91,
+      16.8
+    ]
+  ],
+  "dtype": "torch.bfloat16",
+  "backend": "eager",
+  "conditions": {
+    "baseline": {
+      "prediction": "yes",
+      "yes_logit": 27.0,
+      "no_logit": 25.375,
+      "logit_diff_yes_minus_no": 1.625,
+      "binary_p_yes": 0.8354835510253906,
+      "binary_p_no": 0.16451644897460938
+    },
+    "bbox_to_bos": {
+      "prediction": "no",
+      "yes_logit": 24.875,
+      "no_logit": 27.0,
+      "logit_diff_yes_minus_no": -2.125,
+      "binary_p_yes": 0.10669060051441193,
+      "binary_p_no": 0.8933094143867493
+    },
+    "bbox_to_outside": {
+      "prediction": "no",
+      "yes_logit": 25.5,
+      "no_logit": 26.375,
+      "logit_diff_yes_minus_no": -0.875,
+      "binary_p_yes": 0.29421496391296387,
+      "binary_p_no": 0.7057850360870361
+    }
+  },
+  "delta": {
+    "bbox_to_bos": -3.75,
+    "bbox_to_outside": -2.5
+  },
+  "diagnostics": {
+    "bbox_to_bos": {
+      "nodes": 20,
+      "mean_bbox_mass": 0.23410380096174777,
+      "mean_delta_norm": 0.9499238087330013,
+      "mean_reconstruction_error": 0.01202768289949745
+    },
+    "bbox_to_outside": {
+      "nodes": 20,
+      "mean_bbox_mass": 0.23860627678222954,
+      "mean_delta_norm": 0.8988560215104371,
+      "mean_reconstruction_error": 0.010414262989070267
+    }
+  }
+}

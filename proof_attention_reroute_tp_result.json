@@ -1,0 +1,94 @@
+{
+  "design": "bbox-only: actual head output + attention delta",
+  "question_id": 1,
+  "image": "COCO_train2014_000000412830.jpg",
+  "question": "Is there a bottle in the image?",
+  "object": "bottle",
+  "heads": [
+    "L11H17",
+    "L7H14",
+    "L10H29",
+    "L11H26",
+    "L11H14",
+    "L8H6",
+    "L8H25",
+    "L12H25",
+    "L6H17",
+    "L11H7"
+  ],
+  "queries": [
+    {
+      "slot": "object_last",
+      "position": 587,
+      "token": "le"
+    },
+    {
+      "slot": "in",
+      "position": 588,
+      "token": "\u2581in"
+    }
+  ],
+  "grid": 24,
+  "bbox_patches": 30,
+  "image_patches": 576,
+  "coco_boxes": [
+    [
+      201.12,
+      0.78,
+      59.1,
+      97.45
+    ],
+    [
+      165.16,
+      2.06,
+      48.52,
+      84.65
+    ]
+  ],
+  "dtype": "torch.bfloat16",
+  "backend": "eager",
+  "conditions": {
+    "baseline": {
+      "prediction": "yes",
+      "yes_logit": 29.875,
+      "no_logit": 24.125,
+      "logit_diff_yes_minus_no": 5.75,
+      "binary_p_yes": 0.9968273043632507,
+      "binary_p_no": 0.0031726830638945103
+    },
+    "bbox_to_bos": {
+      "prediction": "yes",
+      "yes_logit": 28.375,
+      "no_logit": 25.5,
+      "logit_diff_yes_minus_no": 2.875,
+      "binary_p_yes": 0.9465966820716858,
+      "binary_p_no": 0.0534033328294754
+    },
+    "bbox_to_outside": {
+      "prediction": "yes",
+      "yes_logit": 28.5,
+      "no_logit": 25.375,
+      "logit_diff_yes_minus_no": 3.125,
+      "binary_p_yes": 0.957912266254425,
+      "binary_p_no": 0.042087726294994354
+    }
+  },
+  "delta": {
+    "bbox_to_bos": -2.875,
+    "bbox_to_outside": -2.625
+  },
+  "diagnostics": {
+    "bbox_to_bos": {
+      "nodes": 20,
+      "mean_bbox_mass": 0.30647588326828556,
+      "mean_delta_norm": 1.5120095558930189,
+      "mean_reconstruction_error": 0.008247478166595101
+    },
+    "bbox_to_outside": {
+      "nodes": 20,
+      "mean_bbox_mass": 0.29144573003286495,
+      "mean_delta_norm": 1.2837071369867772,
+      "mean_reconstruction_error": 0.009603289677761495
+    }
+  }
+}

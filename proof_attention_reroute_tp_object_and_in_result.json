@@ -1,0 +1,92 @@
+{
+  "warning": "Baseline uses the registered eager attention implementation; compare it with the saved default-backend baseline.",
+  "question_id": 1,
+  "image": "COCO_train2014_000000412830.jpg",
+  "question": "Is there a bottle in the image?",
+  "label": "yes",
+  "heads": [
+    "L11H17",
+    "L7H14",
+    "L10H29",
+    "L11H26",
+    "L11H14",
+    "L8H6",
+    "L8H25",
+    "L12H25",
+    "L6H17",
+    "L11H7"
+  ],
+  "query_scope": "object-and-in",
+  "query_positions": [
+    586,
+    587,
+    588
+  ],
+  "visual_span": [
+    5,
+    581
+  ],
+  "target": "bos",
+  "strength": 1.0,
+  "zero_other_heads": false,
+  "baseline": {
+    "prediction": "yes",
+    "yes_logit": 14.234375,
+    "no_logit": 11.90625,
+    "logit_diff_yes_minus_no": 2.328125,
+    "binary_p_yes": 0.9111796617507935,
+    "binary_p_no": 0.08882028609514236
+  },
+  "intervened": {
+    "prediction": "yes",
+    "yes_logit": 14.5,
+    "no_logit": 12.0078125,
+    "logit_diff_yes_minus_no": 2.4921875,
+    "binary_p_yes": 0.9235923886299133,
+    "binary_p_no": 0.07640768587589264
+  },
+  "delta_logit_diff": 0.1640625,
+  "yes_to_no_flip": false,
+  "image_attention_mass": {
+    "L11H17": {
+      "before": 0.7256673574447632,
+      "after": 0.0
+    },
+    "L7H14": {
+      "before": 0.1785481870174408,
+      "after": 0.0
+    },
+    "L10H29": {
+      "before": 0.3069661557674408,
+      "after": 0.0
+    },
+    "L11H26": {
+      "before": 0.47607421875,
+      "after": 0.0
+    },
+    "L11H14": {
+      "before": 0.0954996794462204,
+      "after": 0.0
+    },
+    "L8H6": {
+      "before": 0.3712565302848816,
+      "after": 0.0
+    },
+    "L8H25": {
+      "before": 0.2836812436580658,
+      "after": 0.0
+    },
+    "L12H25": {
+      "before": 0.3157552182674408,
+      "after": 0.0
+    },
+    "L6H17": {
+      "before": 0.2880045771598816,
+      "after": 0.0
+    },
+    "L11H7": {
+      "before": 0.1192118376493454,
+      "after": 0.0
+    }
+  }
+}

@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""Edit attention maps of the 10 object/image-reading circuit heads in LLaVA.
+
+Zero-based circuit heads:
+  L11H17 L7H14 L10H29 L11H26 L11H14
+  L8H6  L8H25 L12H25 L6H17 L11H7
+
+The intervention is applied during prompt prefill only, at the queried object
+tokens, the following ``in`` token, or both.  This file intentionally records
+the rerouted attention mass and clean/intervened Yes-vs-No logits.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import re
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+import torch
+from PIL import Image
+
+
+DEFAULT_HEADS = (
+    (11, 17), (7, 14), (10, 29), (11, 26), (11, 14),
+    (8, 6), (8, 25), (12, 25), (6, 17), (11, 7),
+)
+
+STATE: dict[str, Any] = {
+    "active": False,
+    "heads_by_layer": {},
+    "query_positions": (),
+    "visual_span": (0, 0),
+    "target": "shift-image",
+    "strength": 1.0,
+    "zero_other_heads": False,
+    "mass_before": defaultdict(float),
+    "mass_after": defaultdict(float),
+    "calls": defaultdict(int),
+}
+
+
+def arguments():
+    p = argparse.ArgumentParser()
+    p.add_argument("--pope-file", default="pope_train/coco_train_pope_adversarial.jsonl")
+    p.add_argument("--image-root", default="data/coco2014/train2014/train2014")
+    p.add_argument("--model-id", default="llava-hf/llava-1.5-7b-hf")
+    p.add_argument("--question-id", type=int, default=1)
+    p.add_argument("--query-scope", choices=("object", "in", "object-and-in"), default="object-and-in")
+    p.add_argument(
+        "--target",
+        choices=("bos", "image-border", "shift-image", "remove-image", "remove-bos"),
+        default="shift-image",
+    )
+    p.add_argument("--strength", type=float, default=1.0)
+    p.add_argument("--zero-other-heads", action="store_true")
+    p.add_argument("--torch-dtype", choices=("float16", "bfloat16", "float32"), default="float16")
+    p.add_argument("--output", default="proof_attention_reroute_tp_result.json")
+    return p.parse_args()
+
+
+def load_json_or_jsonl(path):
+    text = Path(path).read_text().strip()
+    if text.startswith("["):
+        return json.loads(text)
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def build_prompt(question):
+    return f"USER: <image>\n{question}\nASSISTANT:"
+
+
+def object_phrase(question):
+    q = question.strip().rstrip("?")
+    for pattern in (
+        r"^is there (?:a |an |any )?(.+?) in (?:the|this) image$",
+        r"^are there (?:a |an |any )?(.+?) in (?:the|this) image$",
+        r"^does (?:the|this) image contain (?:a |an |any )?(.+)$",
+    ):
+        match = re.match(pattern, q, flags=re.I)
+        if match:
+            return match.group(1).strip()
+    raise ValueError(f"Cannot extract object phrase from {question!r}")
+
+
+def find_subsequence(sequence, subsequence, start=0):
+    return [i for i in range(start, len(sequence) - len(subsequence) + 1)
+            if sequence[i:i + len(subsequence)] == subsequence]
+
+
+def visual_span(input_ids, image_token_id):
+    positions = (input_ids[0] == image_token_id).nonzero(as_tuple=False).flatten().tolist()
+    if not positions:
+        raise RuntimeError("Expanded image-token span not found")
+    return min(positions), max(positions) + 1
+
+
+def object_positions(input_ids, tokenizer, phrase, visual_end):
+    ids = input_ids[0].tolist()
+    spans = []
+    for text in (phrase, " " + phrase):
+        encoded = tokenizer.encode(text, add_special_tokens=False)
+        spans += [tuple(range(i, i + len(encoded)))
+                  for i in find_subsequence(ids, encoded, visual_end)]
+    if not spans:
+        raise RuntimeError(f"Token span not found for object {phrase!r}")
+    return max(spans, key=lambda x: x[0])
+
+
+def query_positions_for_scope(input_ids, tokenizer, phrase, visual_end, scope):
+    obj = object_positions(input_ids, tokenizer, phrase, visual_end)
+    if scope == "object":
+        return obj
+    ids = input_ids[0].tolist()
+    encoded = tokenizer.encode(" in", add_special_tokens=False)
+    matches = find_subsequence(ids, encoded, obj[-1] + 1)
+    if not matches:
+        encoded = tokenizer.encode("in", add_special_tokens=False)
+        matches = find_subsequence(ids, encoded, obj[-1] + 1)
+    if not matches:
+        raise RuntimeError("Following `in` token not found")
+    in_pos = tuple(range(matches[0], matches[0] + len(encoded)))
+    return in_pos if scope == "in" else tuple(sorted(set(obj + in_pos)))
+
+
+def border_positions(start, end):
+    count = end - start
+    side = math.isqrt(count)
+    if side * side != count:
+        raise RuntimeError(f"Image span {count} is not square")
+    return tuple(start + r * side + c for r in range(side) for c in range(side)
+                 if r in (0, side - 1) or c in (0, side - 1))
+
+
+def install_attention_editor():
+    from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+    from transformers.models.llama.modeling_llama import repeat_kv
+
+    def edited_attention(module, query, key, value, attention_mask, scaling,
+                         dropout=0.0, **kwargs):
+        key = repeat_kv(key, module.num_key_value_groups)
+        value = repeat_kv(value, module.num_key_value_groups)
+        logits = torch.matmul(query, key.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            logits = logits + attention_mask
+        weights = torch.softmax(logits, dim=-1, dtype=torch.float32).to(query.dtype)
+        heads = STATE["heads_by_layer"].get(module.layer_idx, ())
+
+        # Full prompt only; cached one-token generation is not modified.
+        if STATE["active"] and heads and query.shape[-2] > 1:
+            qpos = [p for p in STATE["query_positions"] if p < weights.shape[-2]]
+            vstart, vend = STATE["visual_span"]
+            if qpos:
+                for head in heads:
+                    before = weights[:, head, qpos, :]
+                    edited = before.clone()
+                    mode, strength = STATE["target"], STATE["strength"]
+                    if mode == "shift-image":
+                        side = math.isqrt(vend - vstart)
+                        image = edited[..., vstart:vend].reshape(*edited.shape[:-1], side, side)
+                        shifted = torch.roll(image, shifts=(side // 2, side // 2), dims=(-2, -1))
+                        edited[..., vstart:vend] = ((1 - strength) * image + strength * shifted).flatten(-2)
+                    elif mode in ("remove-image", "remove-bos"):
+                        remove = slice(vstart, vend) if mode == "remove-image" else slice(0, 1)
+                        candidate = edited.clone()
+                        candidate[..., remove] = 0
+                        candidate /= candidate.sum(-1, keepdim=True).clamp_min(1e-12)
+                        edited = (1 - strength) * before + strength * candidate
+                    else:
+                        targets = (0,) if mode == "bos" else border_positions(vstart, vend)
+                        distribution = torch.zeros_like(edited)
+                        distribution[..., list(targets)] = 1.0 / len(targets)
+                        edited = (1 - strength) * before + strength * distribution
+                    STATE["mass_before"][(module.layer_idx, head)] += before[..., vstart:vend].sum(-1).float().mean().item()
+                    STATE["mass_after"][(module.layer_idx, head)] += edited[..., vstart:vend].sum(-1).float().mean().item()
+                    STATE["calls"][(module.layer_idx, head)] += 1
+                    weights[:, head, qpos, :] = edited
+
+        weights = torch.nn.functional.dropout(weights, p=dropout, training=module.training)
+        output = torch.matmul(weights, value)
+        if STATE["active"] and STATE["zero_other_heads"] and heads and query.shape[-2] > 1:
+            keep = torch.zeros(output.shape[1], dtype=torch.bool, device=output.device)
+            keep[list(heads)] = True
+            output[:, ~keep] = 0
+        return output.transpose(1, 2).contiguous(), weights
+
+    ALL_ATTENTION_FUNCTIONS.register("object_read_reroute", edited_attention)
+
+
+def load_model(args):
+    from transformers import AutoProcessor, LlavaForConditionalGeneration
+    dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16,
+             "float32": torch.float32}[args.torch_dtype]
+    model = LlavaForConditionalGeneration.from_pretrained(
+        args.model_id, torch_dtype=dtype, device_map="auto", low_cpu_mem_usage=True
+    )
+    processor = AutoProcessor.from_pretrained(args.model_id)
+    model.eval()
+    return model, processor
+
+
+def prepare_inputs(processor, item, image_root, device):
+    image = Image.open(os.path.join(image_root, item["image"])).convert("RGB")
+    inputs = processor(text=build_prompt(item["text"]), images=image, return_tensors="pt")
+    return {k: v.to(device) for k, v in inputs.items()}
+
+
+def yes_no_stats(logits, yes_id, no_id):
+    final = logits[0, -1].float()
+    pair = torch.softmax(final[[yes_id, no_id]], dim=0)
+    yl, nl = final[yes_id].item(), final[no_id].item()
+    return {"prediction": "yes" if yl > nl else "no", "yes_logit": yl,
+            "no_logit": nl, "logit_diff_yes_minus_no": yl - nl,
+            "binary_p_yes": pair[0].item(), "binary_p_no": pair[1].item()}
+
+
+@torch.inference_mode()
+def run(model, inputs, yes_id, no_id):
+    return yes_no_stats(model(**inputs, use_cache=False, return_dict=True).logits, yes_id, no_id)
+
+
+def main():
+    args = arguments()
+    if not 0 <= args.strength <= 1:
+        raise ValueError("--strength must be in [0,1]")
+    items = {int(x["question_id"]): x for x in load_json_or_jsonl(args.pope_file)}
+    item = items[args.question_id]
+    STATE["heads_by_layer"] = {layer: [h for l, h in DEFAULT_HEADS if l == layer]
+                               for layer, _ in DEFAULT_HEADS}
+    STATE["target"], STATE["strength"] = args.target, args.strength
+    STATE["zero_other_heads"] = args.zero_other_heads
+    install_attention_editor()
+    model, processor = load_model(args)
+    for module in model.modules():
+        if module.__class__.__name__ == "LlamaAttention":
+            module.config._attn_implementation = "object_read_reroute"
+    inputs = prepare_inputs(processor, item, args.image_root, model.device)
+    vstart, vend = visual_span(inputs["input_ids"], model.config.image_token_index)
+    phrase = object_phrase(item["text"])
+    qpos = query_positions_for_scope(inputs["input_ids"], processor.tokenizer,
+                                      phrase, vend, args.query_scope)
+    STATE["visual_span"], STATE["query_positions"] = (vstart, vend), qpos
+    yes_id = processor.tokenizer.encode("Yes", add_special_tokens=False)[0]
+    no_id = processor.tokenizer.encode("No", add_special_tokens=False)[0]
+    STATE["active"] = False
+    baseline = run(model, inputs, yes_id, no_id)
+    STATE["active"] = True
+    intervened = run(model, inputs, yes_id, no_id)
+    STATE["active"] = False
+    result = {
+        "warning": "Baseline uses the registered eager attention implementation; compare it with the saved default-backend baseline.",
+        "question_id": args.question_id, "image": item["image"], "question": item["text"],
+        "label": item.get("label"), "heads": [f"L{l}H{h}" for l, h in DEFAULT_HEADS],
+        "query_scope": args.query_scope, "query_positions": list(qpos),
+        "visual_span": [vstart, vend], "target": args.target, "strength": args.strength,
+        "zero_other_heads": args.zero_other_heads, "baseline": baseline,
+        "intervened": intervened,
+        "delta_logit_diff": intervened["logit_diff_yes_minus_no"] - baseline["logit_diff_yes_minus_no"],
+        "yes_to_no_flip": baseline["prediction"] == "yes" and intervened["prediction"] == "no",
+        "image_attention_mass": {f"L{l}H{h}": {"before": STATE["mass_before"][(l, h)],
+                                                    "after": STATE["mass_after"][(l, h)]}
+                                 for l, h in DEFAULT_HEADS},
+    }
+    Path(args.output).write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
